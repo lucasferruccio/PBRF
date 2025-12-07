@@ -3,8 +3,6 @@ from operator import truediv
 import cv2
 import mediapipe as mp
 import numpy as np
-import matplotlib.pyplot as plt
-from networkx.algorithms.operators.binary import difference
 
 res_testes = (480, 854)
 res_display = (640,480)
@@ -14,16 +12,21 @@ mp_drawing = mp.solutions.drawing_utils
 mp_pose = mp.solutions.pose
 points_selector = 0
 
-
 """
     Define os thresholeds para a identificação da etapa do salto
 """
 JUMPING_TRESHOLD = 0.006
 LANDING_TRESHOLD = 0.004
 
+"""
+    Texto que marca o instância do pulo (Saltando | Aterrisando | No chão)
+"""
 JUMPING_TEXT = ""
 
-risk_detected = {
+"""
+    Marca quais dos movimentos de riscos já foram detectados
+"""
+RISK_DETECTED = {
     "stance_width" : False,
     "foot_landing" : False,
     "lateral_trunk" : False,
@@ -32,8 +35,11 @@ risk_detected = {
     "ankle_plantar" : False
 }
 
-TEXT = [
-]
+"""
+    Array de textos dos riscos que já foram enconttrados
+"""
+TEXT = []
+
 """
 Organização dos Pontos para cada avaliação de Risco:
 
@@ -80,7 +86,7 @@ ALLOWED_CONECTIONS = [
     {}
 ]
 """
- Funções para GUI
+    Funções para GUI
 """
 def draw_text(img):
     x = 20
@@ -144,7 +150,7 @@ def draw_allowed_points(img, landmarks, points):
         cv2.circle(img, (x, y), radius_size, color, -1)
 
 """
- FunçÕes Auxiliares:
+    FUNÇÕES AUXILIARES:
 """
 
 """
@@ -169,7 +175,7 @@ def mid_point(A, B):
     return np.divide(np.add(A, B), 2)
 
 """
-    Calcula o angulo (em Grau) entre dois vetores usando o arccos dos vetores A e B
+ Calcula o angulo (em Grau) entre dois vetores usando o arccos dos vetores A e B
     Ang = arccos(A.B/|A|x|B|)
 """
 def calculate_angle_arrays(A, B):
@@ -187,8 +193,21 @@ def calculate_angle_arrays(A, B):
     return np.degrees(rdn)
 
 """
+ Calculo do ponto médio entre os calcanhar
+"""
+def foot_position(landmarks):
+    left_ankle = landmarks[mp_pose.PoseLandmark.LEFT_ANKLE.value]
+    right_ankle = landmarks[mp_pose.PoseLandmark.RIGHT_ANKLE.value]
+
+    return (left_ankle.y + right_ankle.y) / 2
+
+"""
+    CÁLCULO DOS RISCOS:
+"""
+
+"""
 • Distância dos pés:
-Cálculo da razão entre a distância dos ombros e a distância dos tornozelos
+ Cálculo da razão entre a distância dos ombros e a distância dos tornozelos
 """
 def stance_width(landmarks, frame_num):
     # Coleta as referencias de cada ponto (Ombros e tornozelos)
@@ -206,17 +225,17 @@ def stance_width(landmarks, frame_num):
     ratio = dist_ankles / dist_shoulders
 
     # Caso n tenha sido detectado adiciona o texto na tela
-    if not risk_detected["stance_width"]:
+    if not RISK_DETECTED["stance_width"]:
         if ratio < 0.8:
             TEXT.append("Narrow Stance: " + f"{ratio:.2f}" + " at frame:" + str(frame_num))
-            risk_detected["stance_width"] = True
+            RISK_DETECTED["stance_width"] = True
         elif ratio > 1.2:
             TEXT.append("Wide Stance: " + f"{ratio:.2f}" + ", at frame: " + str(frame_num))
-            risk_detected["stance_width"] = True
+            RISK_DETECTED["stance_width"] = True
 
 """
 • Flexão Lateral do Tronco:
-Cálculo do angulo do vetor do tronco e um vetor perpendicular ao chão
+ Cálculo do angulo do vetor do tronco e um vetor perpendicular ao chão
 """
 def risk_lateral_trunk(img, landmarks, frame_num):
     font = cv2.FONT_HERSHEY_SIMPLEX
@@ -246,9 +265,9 @@ def risk_lateral_trunk(img, landmarks, frame_num):
 
     angle = calculate_angle_arrays(base_arr, trunk_arr)
 
-    if not risk_detected["lateral_trunk"]:
+    if not RISK_DETECTED["lateral_trunk"]:
         if angle > 7:
-            risk_detected["lateral_trunk"] = True
+            RISK_DETECTED["lateral_trunk"] = True
             TEXT.append("Lateral Trunk detected at frame: " + str(frame_num))
 
     # Adiciona os vetores na imagem
@@ -276,7 +295,7 @@ def risk_lateral_trunk(img, landmarks, frame_num):
 
 """
 • Simterisa dos pés na aterrisagem:
-Cálculo da diferenca de altura das pontas dos pés na aterrisagem
+ Cálculo da diferenca de altura das pontas dos pés na aterrisagem
 """
 def risk_feet_symmetry(landmarks, frame_num):
     global JUMPING_TEXT
@@ -289,25 +308,15 @@ def risk_feet_symmetry(landmarks, frame_num):
 
         foot_assimetry = abs(left_foot_height - right_foot_height)
 
-        if not risk_detected["foot_landing"]:
+        if not RISK_DETECTED["foot_landing"]:
             if foot_assimetry > 0.05:
-                risk_detected["foot_landing"] = True
+                RISK_DETECTED["foot_landing"] = True
                 TEXT.append("Foot land assimetry at frame: " + str(frame_num))
 
 def detect_risks(img, landmarks, frame_num):
     stance_width(landmarks, frame_num)
     risk_lateral_trunk(img, landmarks, frame_num)
     risk_feet_symmetry(landmarks, frame_num)
-
-"""
-    Calculo do ponto médio entre os calcanhar
-"""
-def foot_position(landmarks):
-    left_ankle = landmarks[mp_pose.PoseLandmark.LEFT_ANKLE.value]
-    right_ankle = landmarks[mp_pose.PoseLandmark.RIGHT_ANKLE.value]
-
-    return (left_ankle.y + right_ankle.y) / 2
-
 
 def main():
     global  JUMPING_TEXT
