@@ -313,6 +313,8 @@ def risk_feet_symmetry(landmarks, frame_num):
                 RISK_DETECTED["foot_landing"] = True
                 TEXT.append("Foot land assimetry at frame: " + str(frame_num))
 
+
+
 def detect_risks(img, landmarks, frame_num):
     stance_width(landmarks, frame_num)
     risk_lateral_trunk(img, landmarks, frame_num)
@@ -326,39 +328,51 @@ def main():
     past_frame_foot_y = None
     jump_vel = 0
 
-    video_path = "data/validate/videoFrontal.mp4"
+    video_path_front = "data/validate/VideoFrontal.mp4"
+    video_path_side = "data/validate/VideoLateral.mp4"
 
-    cap = cv2.VideoCapture(video_path)
+    cap_front = cv2.VideoCapture(video_path_front)
+    cap_side = cv2.VideoCapture(video_path_side)
 
-    with mp_pose.Pose(min_detection_confidence=0.8, min_tracking_confidence=0.8) as pose:
-        while cap.isOpened():
+    with mp_pose.Pose(min_detection_confidence=0.8, min_tracking_confidence=0.8) as pose_front, mp_pose.Pose(min_detection_confidence=0.8, min_tracking_confidence=0.8) as pose_side:
+        while cap_front.isOpened() or cap_side.isOpened():
             frame_num+=1
 
-            ret, frame = cap.read()
+            ret_front, frame_front = cap_front.read()
+            ret_side, frame_side = cap_side.read()
 
-            frame1 = cv2.resize(frame, res_testes)
+            frame_front_resized = cv2.resize(frame_front, res_testes)
+            frame_side_resized = cv2.resize(frame_side, res_testes)
 
             # Converte para RGB (Formato do MediaPipe)
-            image = cv2.cvtColor(frame1, cv2.COLOR_BGR2RGB)
+            image_front = cv2.cvtColor(frame_front_resized, cv2.COLOR_BGR2RGB)
+            image_side = cv2.cvtColor(frame_side_resized, cv2.COLOR_BGR2RGB)
+
             # Protecao dos dados e otimizacao
-            image.flags.writeable = False
+            image_front.flags.writeable = False
+            image_side.flags.writeable = False
 
             # Processamento da imagem
-            results = pose.process(image)
+            results_front = pose_front.process(image_front)
+            results_side = pose_side.process(image_side)
+            
 
-            image.flags.writeable = True
-            image_bgr = cv2.cvtColor(image, cv2.COLOR_RGB2BGR)
+            image_front.flags.writeable = True
+            image_side.flags.writeable = True
+            image_bgr_front = cv2.cvtColor(image_front, cv2.COLOR_RGB2BGR)
+            image_bgr_side = cv2.cvtColor(image_side, cv2.COLOR_RGB2BGR)
 
             # Extrai as marcações
+            lm_front = results_front.pose_landmarks.landmark
+            lm_side = results_side.pose_landmarks.landmark
 
-            landmarks = results.pose_landmarks.landmark
-
-            if not landmarks:
+            if not lm_front or not lm_side:
                 continue
 
             # Calculo para checar se esta na ação de pulo
-            foot_y = foot_position(landmarks)
+            foot_y = foot_position(lm_front)
 
+            # Calculo da variação da altura de Y (Identificar os estagios do pulo)
             if past_frame_foot_y:
                 jump_vel = foot_y - past_frame_foot_y
             else:
@@ -374,16 +388,20 @@ def main():
 
             past_frame_foot_y = foot_y
 
-            draw_text(image_bgr)
+            draw_text(image_bgr_front)
 
             # Desenha os landmarks
-            draw_allowed_points(image_bgr, landmarks, ALLOWED_POINTS[points_selector])
-            draw_allowed_connections(image_bgr, landmarks, ALLOWED_CONECTIONS[points_selector])
+            draw_allowed_points(image_bgr_front, lm_front, ALLOWED_POINTS[points_selector])
+            draw_allowed_connections(image_bgr_front, lm_front, ALLOWED_CONECTIONS[points_selector])
+            draw_allowed_points(image_bgr_side, lm_side, ALLOWED_POINTS[points_selector])
+            draw_allowed_connections(image_bgr_side, lm_side, ALLOWED_CONECTIONS[points_selector])
 
-            detect_risks(image_bgr, landmarks, frame_num)
+            detect_risks(image_bgr_front, lm_front, frame_num)
 
-            # Exibe o frame
-            cv2.imshow('Pose Tracking (Pressione Q para sair)', image_bgr)
+            # Concatena as duas imagens
+            frame_concat = cv2.hconcat([image_bgr_front, image_bgr_side])
+
+            cv2.imshow('Pose Tracking (Pressione Q para sair)', frame_concat)
 
             key = cv2.waitKey(1) & 0xFF
 
@@ -397,7 +415,9 @@ def main():
                 break
 
 
-        cap.release()
+        cap_front.release()
+        cap_side.release()
+
         cv2.destroyAllWindows()
 
 if __name__ == "__main__":
