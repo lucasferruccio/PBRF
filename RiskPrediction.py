@@ -1,44 +1,87 @@
+from operator import truediv
+
 import cv2
 import mediapipe as mp
 import numpy as np
 import matplotlib.pyplot as plt
-
-mp_drawing = mp.solutions.drawing_utils
-mp_pose = mp.solutions.pose
+from networkx.algorithms.operators.binary import difference
 
 res_testes = (480, 854)
 res_display = (640,480)
 res_yolo = (640,640)
 
+mp_drawing = mp.solutions.drawing_utils
 mp_pose = mp.solutions.pose
+points_selector = 0
+
+
+"""
+    Define os thresholeds para a identificação da etapa do salto
+"""
+JUMPING_TRESHOLD = 0.006
+LANDING_TRESHOLD = 0.004
+
+JUMPING_TEXT = ""
+
+risk_detected = {
+    "stance_width" : False,
+    "foot_landing" : False,
+    "lateral_trunk" : False,
+    "knee_flexion" : False,
+    "trunk_flexion" : False,
+    "ankle_plantar" : False
+}
 
 TEXT = [
-    "Sistema iniciado",
-    "Aguardando postura",
-    "Postura incorreta",
-    "Ajuste os ombros"
 ]
+"""
+Organização dos Pontos para cada avaliação de Risco:
 
+Frontal:
+ - Posição 1 -> Stance Width 
+ - Posição 2 -> Foot landing
+ - Posição 3 -> Lateral trunk Flexion
+
+Lateral:
+ - Posição 4 -> Knee Flexion 
+ - Posição 5 -> Trunk Flexion
+ - Posição 6 -> Ankle Plantar Flexion
+
+"""
 ALLOWED_POINTS = [
     {
         mp_pose.PoseLandmark.LEFT_SHOULDER,
-        mp_pose.PoseLandmark.LEFT_ELBOW
+        mp_pose.PoseLandmark.RIGHT_SHOULDER,
+        mp_pose.PoseLandmark.LEFT_ANKLE,
+        mp_pose.PoseLandmark.RIGHT_ANKLE
+
     },
     {
+        mp_pose.PoseLandmark.LEFT_SHOULDER,
         mp_pose.PoseLandmark.RIGHT_SHOULDER,
-        mp_pose.PoseLandmark.RIGHT_ELBOW
+        mp_pose.PoseLandmark.LEFT_HIP,
+        mp_pose.PoseLandmark.RIGHT_HIP
+    },
+    {
+        mp_pose.PoseLandmark.LEFT_FOOT_INDEX,
+        mp_pose.PoseLandmark.RIGHT_FOOT_INDEX
     }
 ]
 
 ALLOWED_CONECTIONS = [
     {
-        (mp_pose.PoseLandmark.LEFT_SHOULDER, mp_pose.PoseLandmark.LEFT_ELBOW)
+        (mp_pose.PoseLandmark.LEFT_SHOULDER, mp_pose.PoseLandmark.RIGHT_SHOULDER),
+        (mp_pose.PoseLandmark.LEFT_ANKLE, mp_pose.PoseLandmark.RIGHT_ANKLE)
     },
     {
-        (mp_pose.PoseLandmark.RIGHT_SHOULDER, mp_pose.PoseLandmark.RIGHT_ELBOW),
-    }
+        (mp_pose.PoseLandmark.RIGHT_SHOULDER, mp_pose.PoseLandmark.LEFT_SHOULDER),
+        (mp_pose.PoseLandmark.RIGHT_HIP, mp_pose.PoseLandmark.LEFT_HIP),
+    },
+    {}
 ]
-
+"""
+ Funções para GUI
+"""
 def draw_text(img):
     x = 20
     y = 40
@@ -63,9 +106,19 @@ def draw_text(img):
             cv2.LINE_AA
         )
 
+        cv2.putText(
+            img,
+            JUMPING_TEXT,
+            (x, h - 20),
+            font,
+            scale,
+            text_color,
+            thickness,
+            cv2.LINE_AA
+        )
 
 def draw_allowed_connections(img, landmarks, conections):
-    color = (0, 255, 0)
+    color = (255, 255, 255)
     thickness = 2
     h, w, _ = img.shape
 
@@ -79,7 +132,7 @@ def draw_allowed_connections(img, landmarks, conections):
         cv2.line(img, (x1, y1), (x2, y2), color, thickness)
 
 def draw_allowed_points(img, landmarks, points):
-    color = (255, 0, 0)
+    color = (0, 0, 255)
     radius_size = 5
     h, w, _ = img.shape
 
@@ -90,9 +143,179 @@ def draw_allowed_points(img, landmarks, points):
 
         cv2.circle(img, (x, y), radius_size, color, -1)
 
+"""
+ FunçÕes Auxiliares:
+"""
+
+"""
+ Recebe dois pontos A e B e retorna o vetor AB
+"""
+def create_vector(A, B):
+    return np.array(B) - np.array(A)
+
+"""
+ Calcula a distancia entre os pontos A e B
+"""
+def dist_euclidiana(A, B):
+    return np.linalg.norm(create_vector(A,B))
+
+"""
+ Calcula o ponto médio entre dois pontos
+"""
+def mid_point(A, B):
+    A = np.array(A)
+    B = np.array(B)
+
+    return np.divide(np.add(A, B), 2)
+
+"""
+    Calcula o angulo (em Grau) entre dois vetores usando o arccos dos vetores A e B
+    Ang = arccos(A.B/|A|x|B|)
+"""
+def calculate_angle_arrays(A, B):
+    # Norma dos vetores
+    mod_A = np.linalg.norm(A)
+    mod_B = np.linalg.norm(B)
+
+    # Produto escalar
+    dot_AB = np.dot(A, B)
+
+    # Calculo do angulo em radiano
+    rdn = np.arccos(dot_AB / (mod_A * mod_B))
+
+    # Conversão para grau
+    return np.degrees(rdn)
+
+"""
+• Distância dos pés:
+Cálculo da razão entre a distância dos ombros e a distância dos tornozelos
+"""
+def stance_width(landmarks, frame_num):
+    # Coleta as referencias de cada ponto (Ombros e tornozelos)
+    left_shoulder = [landmarks[mp_pose.PoseLandmark.LEFT_SHOULDER].x, landmarks[mp_pose.PoseLandmark.LEFT_SHOULDER].y]
+    right_shoulder = [landmarks[mp_pose.PoseLandmark.RIGHT_SHOULDER].x, landmarks[mp_pose.PoseLandmark.RIGHT_SHOULDER].y]
+
+    left_ankle = [landmarks[mp_pose.PoseLandmark.LEFT_ANKLE].x, landmarks[mp_pose.PoseLandmark.LEFT_ANKLE].y]
+    right_ankle = [landmarks[mp_pose.PoseLandmark.RIGHT_ANKLE].x, landmarks[mp_pose.PoseLandmark.RIGHT_ANKLE].y]
+
+    # Calcula as distâncias
+    dist_shoulders = dist_euclidiana(left_shoulder, right_shoulder)
+    dist_ankles = dist_euclidiana(left_ankle, right_ankle)
+
+    # Calcula a razão
+    ratio = dist_ankles / dist_shoulders
+
+    # Caso n tenha sido detectado adiciona o texto na tela
+    if not risk_detected["stance_width"]:
+        if ratio < 0.8:
+            TEXT.append("Narrow Stance: " + f"{ratio:.2f}" + " at frame:" + str(frame_num))
+            risk_detected["stance_width"] = True
+        elif ratio > 1.2:
+            TEXT.append("Wide Stance: " + f"{ratio:.2f}" + ", at frame: " + str(frame_num))
+            risk_detected["stance_width"] = True
+
+"""
+• Flexão Lateral do Tronco:
+Cálculo do angulo do vetor do tronco e um vetor perpendicular ao chão
+"""
+def risk_lateral_trunk(img, landmarks, frame_num):
+    font = cv2.FONT_HERSHEY_SIMPLEX
+    line_spacing = 30
+    scale = 0.7
+    thickness = 2
+    text_color = (0, 255, 255)
+    h, w, _ = img.shape
+
+    # Coleta as referencias de cada ponto (Ombros e quadril)
+    left_shoulder = [landmarks[mp_pose.PoseLandmark.LEFT_SHOULDER].x, landmarks[mp_pose.PoseLandmark.LEFT_SHOULDER].y]
+    right_shoulder = [landmarks[mp_pose.PoseLandmark.RIGHT_SHOULDER].x, landmarks[mp_pose.PoseLandmark.RIGHT_SHOULDER].y]
+
+    left_hip = [landmarks[mp_pose.PoseLandmark.LEFT_HIP].x, landmarks[mp_pose.PoseLandmark.LEFT_HIP].y]
+    right_hip = [landmarks[mp_pose.PoseLandmark.RIGHT_HIP].x, landmarks[mp_pose.PoseLandmark.RIGHT_HIP].y]
+
+    # Mediana do ombro e quadril
+    mid_shoulder = mid_point(left_shoulder, right_shoulder)
+    mid_hip = mid_point(left_hip, right_hip)
+
+    # Referencia central do topo
+    mid_top = np.array((mid_hip[0], 0))
+
+    # Vetores usado como base de referencia e do quadril
+    base_arr = create_vector(mid_top, mid_hip)
+    trunk_arr = create_vector(mid_shoulder, mid_hip)
+
+    angle = calculate_angle_arrays(base_arr, trunk_arr)
+
+    if not risk_detected["lateral_trunk"]:
+        if angle > 7:
+            risk_detected["lateral_trunk"] = True
+            TEXT.append("Lateral Trunk detected at frame: " + str(frame_num))
+
+    # Adiciona os vetores na imagem
+
+    if points_selector == 1:
+        # Conversão para pixels
+        mid_shoulder_px = (int(mid_shoulder[0] * w), int(mid_shoulder[1] * h))
+        mid_hip_px = (int(mid_hip[0] * w), int(mid_hip[1] * h))
+        mid_top_px = (int(mid_top[0] * w), int(mid_top[1] * h))
+
+        cv2.putText(
+            img,
+            f"{angle:.2f}",
+            mid_hip_px,
+            font,
+            scale,
+            text_color,
+            thickness,
+            cv2.LINE_AA
+        )
+
+        # Desenha os vetores
+        cv2.line(img, mid_top_px, mid_hip_px, (255,255,255), 2)  # Base
+        cv2.line(img, mid_shoulder_px, mid_hip_px, (0,0,255), 2)  # Tronco
+
+"""
+• Simterisa dos pés na aterrisagem:
+Cálculo da diferenca de altura das pontas dos pés na aterrisagem
+"""
+def risk_feet_symmetry(landmarks, frame_num):
+    global JUMPING_TEXT
+
+    if JUMPING_TEXT == "Aterrissando!":
+
+        # Coleta as referencias dos pontos da ponta dos pés
+        left_foot_height = landmarks[mp_pose.PoseLandmark.LEFT_ANKLE].y
+        right_foot_height  = landmarks[mp_pose.PoseLandmark.RIGHT_ANKLE].y
+
+        foot_assimetry = abs(left_foot_height - right_foot_height)
+
+        if not risk_detected["foot_landing"]:
+            if foot_assimetry > 0.05:
+                risk_detected["foot_landing"] = True
+                TEXT.append("Foot land assimetry at frame: " + str(frame_num))
+
+def detect_risks(img, landmarks, frame_num):
+    stance_width(landmarks, frame_num)
+    risk_lateral_trunk(img, landmarks, frame_num)
+    risk_feet_symmetry(landmarks, frame_num)
+
+"""
+    Calculo do ponto médio entre os calcanhar
+"""
+def foot_position(landmarks):
+    left_ankle = landmarks[mp_pose.PoseLandmark.LEFT_ANKLE.value]
+    right_ankle = landmarks[mp_pose.PoseLandmark.RIGHT_ANKLE.value]
+
+    return (left_ankle.y + right_ankle.y) / 2
+
 
 def main():
-    points_selector = 1
+    global  JUMPING_TEXT
+    global points_selector
+
+    frame_num = 0
+    past_frame_foot_y = None
+    jump_vel = 0
 
     video_path = "data/validate/videoFrontal.mp4"
 
@@ -100,6 +323,8 @@ def main():
 
     with mp_pose.Pose(min_detection_confidence=0.8, min_tracking_confidence=0.8) as pose:
         while cap.isOpened():
+            frame_num+=1
+
             ret, frame = cap.read()
 
             frame1 = cv2.resize(frame, res_testes)
@@ -116,30 +341,51 @@ def main():
             image_bgr = cv2.cvtColor(image, cv2.COLOR_RGB2BGR)
 
             # Extrai as marcações
-            try:
-                landmarks = results.pose_landmarks.landmark
-            except:
-                pass
+
+            landmarks = results.pose_landmarks.landmark
+
+            if not landmarks:
+                continue
+
+            # Calculo para checar se esta na ação de pulo
+            foot_y = foot_position(landmarks)
+
+            if past_frame_foot_y:
+                jump_vel = foot_y - past_frame_foot_y
+            else:
+                past_frame_foot_y = foot_y
+
+            if np.abs(jump_vel) >= JUMPING_TRESHOLD:
+                if jump_vel < 0:
+                    JUMPING_TEXT = "Saltando!"
+                else:
+                    JUMPING_TEXT = "Aterrissando!"
+            else:
+                JUMPING_TEXT = "No chao"
+
+            past_frame_foot_y = foot_y
 
             draw_text(image_bgr)
 
             # Desenha os landmarks
-            if results.pose_landmarks:
-                draw_allowed_points(image_bgr, landmarks, ALLOWED_POINTS[points_selector])
-                draw_allowed_connections(image_bgr, landmarks, ALLOWED_CONECTIONS[points_selector])
+            draw_allowed_points(image_bgr, landmarks, ALLOWED_POINTS[points_selector])
+            draw_allowed_connections(image_bgr, landmarks, ALLOWED_CONECTIONS[points_selector])
 
+            detect_risks(image_bgr, landmarks, frame_num)
 
             # Exibe o frame
             cv2.imshow('Pose Tracking (Pressione Q para sair)', image_bgr)
 
-            if cv2.waitKey(1) & 0xFF == ord('q'):
-                break
+            key = cv2.waitKey(1) & 0xFF
 
-            if cv2.waitKey(1) & 0xFF == ord('1'):
+            if key == ord('1'):
                 points_selector = 0
-
-            if cv2.waitKey(1) & 0xFF == ord('2'):
+            elif key == ord('2'):
                 points_selector = 1
+            elif key == ord('3'):
+                points_selector = 2
+            elif key == ord('q'):
+                break
 
 
         cap.release()
