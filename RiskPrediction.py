@@ -54,7 +54,7 @@ Lateral:
  - Posição 6 -> Ankle Plantar Flexion
 
 """
-ALLOWED_POINTS = [
+ALLOWED_POINTS_FRONT = [
     {
         mp_pose.PoseLandmark.LEFT_SHOULDER,
         mp_pose.PoseLandmark.RIGHT_SHOULDER,
@@ -63,28 +63,50 @@ ALLOWED_POINTS = [
 
     },
     {
+        mp_pose.PoseLandmark.LEFT_FOOT_INDEX,
+        mp_pose.PoseLandmark.RIGHT_FOOT_INDEX
+    },
+    {
         mp_pose.PoseLandmark.LEFT_SHOULDER,
         mp_pose.PoseLandmark.RIGHT_SHOULDER,
         mp_pose.PoseLandmark.LEFT_HIP,
         mp_pose.PoseLandmark.RIGHT_HIP
     },
     {
-        mp_pose.PoseLandmark.LEFT_FOOT_INDEX,
-        mp_pose.PoseLandmark.RIGHT_FOOT_INDEX
+        mp_pose.PoseLandmark.LEFT_HIP,
+        mp_pose.PoseLandmark.LEFT_KNEE,
+        mp_pose.PoseLandmark.LEFT_ANKLE
     }
 ]
 
-ALLOWED_CONECTIONS = [
+ALLOWED_CONECTIONS_FRONT = [
     {
         (mp_pose.PoseLandmark.LEFT_SHOULDER, mp_pose.PoseLandmark.RIGHT_SHOULDER),
         (mp_pose.PoseLandmark.LEFT_ANKLE, mp_pose.PoseLandmark.RIGHT_ANKLE)
     },
+    {},
     {
         (mp_pose.PoseLandmark.RIGHT_SHOULDER, mp_pose.PoseLandmark.LEFT_SHOULDER),
         (mp_pose.PoseLandmark.RIGHT_HIP, mp_pose.PoseLandmark.LEFT_HIP),
+    }
+]
+
+ALLOWED_POINTS_SIDE = [
+    {
+        mp_pose.PoseLandmark.LEFT_HIP,
+        mp_pose.PoseLandmark.LEFT_KNEE,
+        mp_pose.PoseLandmark.LEFT_ANKLE
     },
+    {},
     {}
 ]
+
+ALLOWED_CONECTIONS_SIDE = [
+    {},
+    {},
+    {}
+]
+
 """
     Funções para GUI
 """
@@ -313,12 +335,28 @@ def risk_feet_symmetry(landmarks, frame_num):
                 RISK_DETECTED["foot_landing"] = True
                 TEXT.append("Foot land assimetry at frame: " + str(frame_num))
 
+"""
+• Flexão de Joelho:
+ Cálculo do angulo de flexão do joelho esquerdo
+"""
+def risk_knee_flexion(img, landmarks, frame_num):
+    # Coleta das referências do quadril, joelho e tornozelo
+    hip = [landmarks[mp_pose.PoseLandmark.LEFT_HIP].x, landmarks[mp_pose.PoseLandmark.LEFT_HIP].y]
+    knee = [landmarks[mp_pose.PoseLandmark.LEFT_KNEE].x, landmarks[mp_pose.PoseLandmark.LEFT_KNEE].y]
+    ankle = [landmarks[mp_pose.PoseLandmark.LEFT_ANKLE].x, landmarks[mp_pose.PoseLandmark.LEFT_ANKLE].y]
+
+    # Criação dos vetores (Coxa e Canela)
+    thigh_arr = create_vector(hip, knee)
+    shin_arr = create_vector(ankle, knee)
+
+    # Cálculo do angulo do joelho
+    knee_angle = calculate_angle_arrays(shin_arr, thigh_arr)
 
 
-def detect_risks(img, landmarks, frame_num):
-    stance_width(landmarks, frame_num)
-    risk_lateral_trunk(img, landmarks, frame_num)
-    risk_feet_symmetry(landmarks, frame_num)
+def detect_risks(img_front, image_side, landmarks_front, landmarks_side, frame_num):
+    stance_width(landmarks_front, frame_num)
+    risk_lateral_trunk(img_front, landmarks_front, frame_num)
+    risk_feet_symmetry(landmarks_front, frame_num)
 
 def main():
     global  JUMPING_TEXT
@@ -391,12 +429,13 @@ def main():
             draw_text(image_bgr_front)
 
             # Desenha os landmarks
-            draw_allowed_points(image_bgr_front, lm_front, ALLOWED_POINTS[points_selector])
-            draw_allowed_connections(image_bgr_front, lm_front, ALLOWED_CONECTIONS[points_selector])
-            draw_allowed_points(image_bgr_side, lm_side, ALLOWED_POINTS[points_selector])
-            draw_allowed_connections(image_bgr_side, lm_side, ALLOWED_CONECTIONS[points_selector])
+            draw_allowed_points(image_bgr_front, lm_front, ALLOWED_POINTS_FRONT[points_selector])
+            draw_allowed_connections(image_bgr_front, lm_front, ALLOWED_CONECTIONS_FRONT[points_selector])
 
-            detect_risks(image_bgr_front, lm_front, frame_num)
+            draw_allowed_points(image_bgr_side, lm_side, ALLOWED_POINTS_SIDE[points_selector])
+            draw_allowed_connections(image_bgr_side, lm_side, ALLOWED_CONECTIONS_SIDE[points_selector])
+
+            detect_risks(image_bgr_front, image_bgr_side, lm_front, lm_side, frame_num)
 
             # Concatena as duas imagens
             frame_concat = cv2.hconcat([image_bgr_front, image_bgr_side])
