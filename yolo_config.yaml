@@ -1,0 +1,20 @@
+path: D:\Faculdade\Sexto Periodo\computer_vision\PBRF\dataset
+
+#Treinar Frontal
+#train: ./front/images/train
+#val: ./front/images/val
+
+#Treinar Lateral
+train: ./side/images/train
+val: ./side/images/val
+
+nc: 7
+
+names:
+  0: Narrow Stance
+  1: Wide Stance
+  2: Lateral Trunk
+  3: Foot Asymmetry
+  4: Knee Flexion
+  5: Trunk Flexion
+  6: Ankle Plantar
